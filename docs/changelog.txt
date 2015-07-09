@@ -1,0 +1,36 @@
+CHANGELOG:
+---------------------------------------------------------------------------
+
+- Version 1.0 - 3 April 2008 - Brian Stanback
+    * Initial release
+
+- Version 2.0 - 27 Feb 2010 - Thom Dyson
+    * Changed the UPS processing to match the current UPS format
+    * Added Support for day of the week to the date
+
+- Version 2.1 - 3 March 2010 - Thom Dyson
+    * Changed the UPS detail processing to handle blank locations by repeating
+      the previous value
+    * Added an "as of" line so that the age of the data can be seen
+    * Changed the FedEx format to handle the current layout
+    * Removed Google Maps Geocode function
+
+- Version 3.0 - 27 July 2010 - Brian Stanback
+    * Decoupled cache handling from main tracking class to allow
+      developers to decide if and how caching is implemented.
+    * Setup abstract class for which each carrier extends. (While this increases
+      lines of code and number of files, it improves modularity and does a
+      better job at self-documenting which should facilitate maintainability
+      and make API integration easier.)
+    * Cleaned up formatting of code and added more comments (should
+      now be able to run through phpDocumentor with a bit of finessing).
+    * Updated the UPS carrier class to match the current UPS format.
+    * Updated FedEx carrier class to be much simpler and more robust by
+      leveraging json_decode().
+    * Tested with live and historical UPS and FedEx tracking numbers, and 
+      historical USPS numbers. All other carriers are untested. Please direct
+      any issues or patches to the Chumby forum topic at 
+      <http://forum.chumby.com/viewtopic.php?id=2079&p=2>.
+    * Added check-bit and syntax detection for carriers to allow auto-detection
+      of carrier based on the number specified.
+    * Included German DHL community contribution.
