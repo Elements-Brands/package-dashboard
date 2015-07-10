@@ -1,5 +1,95 @@
 <?
+	require_once('config.php');
 	require_once('database.php');
+	require_once('vendor/autoload.php');
+	require_once('helper.functions.php');
+
+	$messages = "";
+
+	if ($_SERVER['REQUEST_METHOD'] == "POST")
+	{
+		$aftership = new AfterShip\Trackings($aftership_api_key);
+
+		// got to do something before loading the page
+		if (isset($_POST['markRec']))
+		{
+			$sql = "UPDATE packages SET delivery_confirmed=1, delivery='".date("Y-m-d H:i:s")."', status='Delivered' WHERE idx=".mysql_escape_string($_POST['markRec']);
+			mysql_query($sql) or die (mysql_error());
+			$messages .= '<div class="alert alert-success" role="alert">
+					<strong>Package Marked Delivered.</strong> Further tracking updates will not be monitored.
+				</div>';
+		}
+		if (isset($_POST['markDel']))
+		{
+			$sql = "DELETE FROM packages WHERE idx=".mysql_escape_string($_POST['markDel']);
+			mysql_query($sql) or die (mysql_error());
+
+			if (isset($_POST['aftership_id']) && !empty($_POST['aftership_id']))
+				$aftership->delete_by_id($_POST['aftership_id']);
+
+			$messages .= '<div class="alert alert-info" role="alert">
+					<strong>Package Deleted.</strong> Tracking will no longer be checked.
+				</div>';
+		}
+		if (isset($_POST['addShipment']))
+		{
+			if (!empty($_POST['trackingNumber']) && $_POST['toggleTracking'] == 'trackingTab')
+			{
+				// send this to aftership and process the response
+
+				$tracking_info = array(
+					"title" => $_POST['contents'], // an optional title for this shipment
+				);
+				$return = $aftership->create($_POST['trackingNumber'], $tracking_info);
+
+				$shipment = array(
+				    "idx" => 0, // force creation of new shipment
+					"aftership_id" => $return['data']['tracking']['id'],
+					"tracking" => $return['data']['tracking']['tracking_number'],
+					"carrier" => $return['data']['tracking']['slug'],
+					"shipped" => null,
+					"delivery" => null,
+					"status" => $return['data']['tracking']['tag'],
+					"shipper" => $_POST['shipper'],
+					"destination" => $_POST['destination'],
+					"contents" => $_POST['contents'],
+				);
+
+				if ($return['data']['tracking']['tag'] == "Delivered")
+					$shipment['delivery_confirmed'] = 1;
+			}
+			else
+			{
+				if(empty($_POST['expectShipDate']))
+					$_POST['expectShipDate'] = date('Y-m-D H:i:s', strtotime('today'));
+				else
+					$_POST['expectShipDate'] = date('Y-m-D H:i:s', strtotime($_POST['expectShipDate']));
+
+				$shipment = array(
+				    "idx" => 0, // force creation of new shipment
+					"shipped" => null,
+					"delivery" => $_POST['expectShipDate'],
+					"status" => "Awaiting Shipment",
+					"shipper" => $_POST['shipper'],
+					"destination" => $_POST['destination'],
+					"contents" => $_POST['contents'],
+				);
+			}
+
+			if (record_shipment($shipment))
+			{
+				$messages .= '<div class="alert alert-success" role="alert">
+					<strong>Package Added.</strong> You can now find up-to-date tracking information in the table below.
+				</div>';
+			}
+			else
+			{
+				$messages .= '<div class="alert alert-error" role="alert">
+					<strong>Shipment Not Added.</strong> Something went wrong and your shipment could not be added. You may try again, or try to track it directly with the carrier.
+				</div>';
+			}
+		}
+	}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -8,11 +98,8 @@
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
-		<meta name="description" content="">
-		<meta name="author" content="">
-		<link rel="icon" href="../../favicon.ico">
 
-		<title>Theme Template for Bootstrap</title>
+		<title>Package Dashboard</title>
 
 		<!-- Latest compiled and minified CSS -->
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
@@ -21,7 +108,17 @@
 		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap-theme.min.css">
 
 		<!-- Custom styles for this template -->
-		<link href="theme.css" rel="stylesheet">
+		<!--<link href="theme.css" rel="stylesheet">-->
+
+		<!-- Bootstrap core JavaScript -->
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
+		<!-- Latest compiled and minified JavaScript -->
+		<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+
+		<!-- Datepicker -->
+		<link rel="stylesheet" href="css/bootstrap-datepicker.min.css">
+		<script src="js/bootstrap-datepicker.min.js"></script>
+
 	</head>
 
 	<body role="document">
@@ -41,7 +138,7 @@
 				<div id="navbar" class="navbar-collapse collapse">
 					<ul class="nav navbar-nav">
 						<li class="active"><a href="#">Home</a></li>
-						<li><a href="#about">Add Package</a></li>
+						<li><a href="#about" data-toggle="modal" data-target="#addShipmentModal">Add Package</a></li>
 					</ul>
 				</div><!--/.nav-collapse -->
 			</div>
@@ -49,39 +146,83 @@
 
 		<div class="container theme-showcase" role="main">
 
-			<div class="page-header" style="padding-top: 20px">
-				<h1>Inbound Packages</h1>
+			<div class="page-header" style="padding-top: 15px">
+				<h1>Important Packages</h1>
 			</div>
 
+			<?=$messages?>
+
 			<div class="row">
-				<div class="col-md-6">
+				<div class="col-md-12">
 					<table class="table table-striped">
 						<thead>
 							<tr>
-								<th>#</th>
-								<th>Tracking</th>
-								<th>From</th>
-								<th>To</th>
-								<th>Contents</th>
-								<th>Shipped</th>
-								<th>Delivery</th>
+								<th data-field="id" data-sortable="true">#</th>
+								<th data-field="tracking" data-sortable="true">Tracking</th>
+								<th data-field="from" data-sortable="true">From</th>
+								<th data-field="to" data-sortable="true">To</th>
+								<th data-field="contents" data-sortable="true">Contents</th>
+								<th data-field="shipped" data-sortable="true">Shipped</th>
+								<th data-field="delivery" data-sortable="true">Delivery</th>
+								<th data-field="daysleft" data-sortable="true">Days Left</th>
+								<th data-field="status" data-sortable="true">Status</th>
+								<th>Actions</th>
 							</tr>
 						</thead>
-						<tbody>
-						<?
-							$sql = "SELECT * FROM packages WHERE delivery >= '".date("Y-m-d H:i:s", strtotime("7 days ago"))."' OR delivery IS NULL";
+						<tbody><?
+							$sql = "SELECT * FROM packages WHERE delivery_confirmed=0 OR delivery > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY) ORDER BY TIMEDIFF(shipped, delivery) DESC";
 							$result = mysql_query($sql) or die (mysql_error());
 
 							while($package = mysql_fetch_assoc($result)) {
-						?>
-							<tr>
+								if ($package['shipped'] == "0000-00-00 00:00:00" || (strtotime($package['shipped']) < strtotime("1 year ago")))
+								{
+									$package['shipped_formatted'] = "";
+									$package['shipped'] = 0;
+								}
+								else
+									$package['shipped_formatted'] = date('D, F jS, Y', strtotime($package['shipped']));
+
+								if ($package['delivery'] == "0000-00-00 00:00:00" || (strtotime($package['delivery']) < strtotime("1 year ago")))
+								{
+									$package['delivery_formatted'] = "";
+									$package['delivery'] = 0;
+								}
+								else
+									$package['delivery_formatted'] = date('D, F jS, Y', strtotime($package['delivery']));
+
+								// calculate days remaining
+								if ($package['delivery'] != 0 && $package['shipped'] != 0)
+									$package['days_remaining'] = (strtotime($package['delivery']) - strtotime("today")) / ( 60*60*24 );
+								else
+									$package['days_remaining'] = "?";
+
+
+							?><tr>
 								<td><?=$package['idx']?></td>
-								<td><?=$package['tracking']?> (<?=$package['carrier']?>)</td>
+								<td>
+									<? if (!empty($package['tracking'])) { ?>
+									<a href="<?=get_tracking_url($package['tracking'])?>"><?=$package['tracking']?></a><br />(<?=strtoupper($package['carrier'])." ".ucwords(strtolower($package['method']))?>)</td>
+									<? } else { ?>
+									None Yet
+									<? } ?>
+								</td>
 								<td><?=$package['shipper']?></td>
 								<td><?=$package['destination']?></td>
 								<td><?=$package['contents']?></td>
-								<td><?=$package['shipped']?></td>
-								<td><?=$package['delivery']?></td>
+								<td><?=$package['shipped_formatted']?></td>
+								<td><?=$package['delivery_formatted']?></td>
+								<td><?=$package['days_remaining']?>
+								<td><?=$package['status']?></td>
+								<td>
+									<form action="<?=htmlentities($_SERVER['PHP_SELF'])?>" method="POST">
+										<input type="hidden" name="aftership_id" value="<?=$package['aftership_id']?>" />
+										<? if (!$package['delivery_confirmed']) { ?>
+										<button type="submit" name="markRec" value="<?=$package['idx']?>" class="btn btn-xs btn-success">Mark Received</button>
+										<? } ?>
+										<button type="button" name="edit" value="<?=$package['idx']?>" class="btn btn-xs btn-primary" data-toggle="modal" data-target="#editPackageModal" data-whatever="">Edit</button>
+										<button type="submit" name="markDel" value="<?=$package['idx']?>" class="btn btn-xs btn-danger">Delete</button>
+									</form>
+								</td>
 							</tr>
 						<?
 							}
@@ -91,566 +232,152 @@
 				</div>
 			</div>
 
-			<div class="page-header">
-				<h1>Buttons</h1>
-			</div>
-			<p>
-				<button type="button" class="btn btn-lg btn-default">Default</button>
-				<button type="button" class="btn btn-lg btn-primary">Primary</button>
-				<button type="button" class="btn btn-lg btn-success">Success</button>
-				<button type="button" class="btn btn-lg btn-info">Info</button>
-				<button type="button" class="btn btn-lg btn-warning">Warning</button>
-				<button type="button" class="btn btn-lg btn-danger">Danger</button>
-				<button type="button" class="btn btn-lg btn-link">Link</button>
-			</p>
-			<p>
-				<button type="button" class="btn btn-default">Default</button>
-				<button type="button" class="btn btn-primary">Primary</button>
-				<button type="button" class="btn btn-success">Success</button>
-				<button type="button" class="btn btn-info">Info</button>
-				<button type="button" class="btn btn-warning">Warning</button>
-				<button type="button" class="btn btn-danger">Danger</button>
-				<button type="button" class="btn btn-link">Link</button>
-			</p>
-			<p>
-				<button type="button" class="btn btn-sm btn-default">Default</button>
-				<button type="button" class="btn btn-sm btn-primary">Primary</button>
-				<button type="button" class="btn btn-sm btn-success">Success</button>
-				<button type="button" class="btn btn-sm btn-info">Info</button>
-				<button type="button" class="btn btn-sm btn-warning">Warning</button>
-				<button type="button" class="btn btn-sm btn-danger">Danger</button>
-				<button type="button" class="btn btn-sm btn-link">Link</button>
-			</p>
-			<p>
-				<button type="button" class="btn btn-xs btn-default">Default</button>
-				<button type="button" class="btn btn-xs btn-primary">Primary</button>
-				<button type="button" class="btn btn-xs btn-success">Success</button>
-				<button type="button" class="btn btn-xs btn-info">Info</button>
-				<button type="button" class="btn btn-xs btn-warning">Warning</button>
-				<button type="button" class="btn btn-xs btn-danger">Danger</button>
-				<button type="button" class="btn btn-xs btn-link">Link</button>
-			</p>
+			<!-- Modal -->
+			<script>
+				$(document).ready(function() {
+					$("#futureTab").hide();
 
+					$("input[name$='toggleTracking']").click(function() {
+						var test = $(this).val();
+						$("#trackingTab").hide();
+						$("#futureTab").hide();
+						$("#" + test).show();
+					});
 
-			<div class="page-header">
-				<h1>Tables</h1>
-			</div>
-			<div class="row">
-				<div class="col-md-6">
-					<table class="table">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>First Name</th>
-								<th>Last Name</th>
-								<th>Username</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<td>1</td>
-								<td>Mark</td>
-								<td>Otto</td>
-								<td>@mdo</td>
-							</tr>
-							<tr>
-								<td>2</td>
-								<td>Jacob</td>
-								<td>Thornton</td>
-								<td>@fat</td>
-							</tr>
-							<tr>
-								<td>3</td>
-								<td>Larry</td>
-								<td>the Bird</td>
-								<td>@twitter</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-				<div class="col-md-6">
-					<table class="table table-striped">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>First Name</th>
-								<th>Last Name</th>
-								<th>Username</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<td>1</td>
-								<td>Mark</td>
-								<td>Otto</td>
-								<td>@mdo</td>
-							</tr>
-							<tr>
-								<td>2</td>
-								<td>Jacob</td>
-								<td>Thornton</td>
-								<td>@fat</td>
-							</tr>
-							<tr>
-								<td>3</td>
-								<td>Larry</td>
-								<td>the Bird</td>
-								<td>@twitter</td>
-							</tr>
-						</tbody>
-					</table>
+					$('#futureTab input').datepicker({
+					    autoclose: true,
+					    todayHighlight: true
+					});
+				});
+
+			
+			</script>
+
+			<!-- Add shipment modal -->
+			<div class="modal fade" id="addShipmentModal" tabindex="-1" role="dialog" aria-labelledby="addShipmentModalLabel">
+				<div class="modal-dialog" role="document">
+					<div class="modal-content">
+						<div class="modal-header">
+							<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+							<h4 class="modal-title" id="addShipmentModalLabel">Add a Shipment</h4>
+						</div>
+						<form class="form-horizontal" action="<?=htmlentities($_SERVER['PHP_SELF'])?>" method="POST">
+							<div class="modal-body">
+								<div class="form-group">
+									<fieldset>
+										<div class="col-sm-4 col-md-offset-3">
+											<input type="radio" name="toggleTracking" value="trackingTab" checked />
+											<label for="login"> Already Shipped</label>
+										</div>
+										<div class="col-sm-4">
+											<input type="radio" name="toggleTracking" value="futureTab" />
+											<label for="register"> Future Shipment</label>
+										</div>
+									</fieldset>
+								</div>
+								<div class="form-group" id="trackingTab">
+									<label for="trackingNumber" class="col-sm-3 control-label">Tracking Number</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="trackingNumber" id="trackingNumber" placeholder="USPS, UPS, FedEx, and many others supported">
+									</div>
+								</div>
+								<div class="form-group" id="futureTab">
+									<label for="expectShipDate" class="col-sm-3 control-label">Expected Shipping Date</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="expectShipDate" id="expectShipDate" placeholder="When do we expect this to ship?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="shipper" class="col-sm-3 control-label">Shipper/From</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="shipper" id="shipper" placeholder="Who mailed this?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="destination" class="col-sm-3 control-label">Destination/To</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="destination" id="destination" placeholder="Who is receiving it?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="contents" class="col-sm-3 control-label">Contents</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="contents" id="contents" placeholder="What's inside?">
+									</div>
+								</div>
+							</div>
+							<div class="modal-footer">
+								<button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+								<button type="submit" name="addShipment" class="btn btn-primary">Add Shipment</button>
+							</div>
+						</form>
+					</div>
 				</div>
 			</div>
 
-			<div class="row">
-				<div class="col-md-6">
-					<table class="table table-bordered">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>First Name</th>
-								<th>Last Name</th>
-								<th>Username</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<td rowspan="2">1</td>
-								<td>Mark</td>
-								<td>Otto</td>
-								<td>@mdo</td>
-							</tr>
-							<tr>
-								<td>Mark</td>
-								<td>Otto</td>
-								<td>@TwBootstrap</td>
-							</tr>
-							<tr>
-								<td>2</td>
-								<td>Jacob</td>
-								<td>Thornton</td>
-								<td>@fat</td>
-							</tr>
-							<tr>
-								<td>3</td>
-								<td colspan="2">Larry the Bird</td>
-								<td>@twitter</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-				<div class="col-md-6">
-					<table class="table table-condensed">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>First Name</th>
-								<th>Last Name</th>
-								<th>Username</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<td>1</td>
-								<td>Mark</td>
-								<td>Otto</td>
-								<td>@mdo</td>
-							</tr>
-							<tr>
-								<td>2</td>
-								<td>Jacob</td>
-								<td>Thornton</td>
-								<td>@fat</td>
-							</tr>
-							<tr>
-								<td>3</td>
-								<td colspan="2">Larry the Bird</td>
-								<td>@twitter</td>
-							</tr>
-						</tbody>
-					</table>
+			<!-- Edit shipment modal -->
+			<div class="modal fade" id="editPackageModal" tabindex="-1" role="dialog" aria-labelledby="editPackageModalLabel">
+				<div class="modal-dialog" role="document">
+					<div class="modal-content">
+						<div class="modal-header">
+							<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+							<h4 class="modal-title" id="editPackageModalLabel">Edit Shipment</h4>
+						</div>
+						<form class="form-horizontal" action="<?=htmlentities($_SERVER['PHP_SELF'])?>" method="POST">
+							<div class="modal-body">
+								<div class="form-group">
+									<fieldset>
+										<div class="col-sm-4 col-md-offset-3">
+											<input type="radio" name="toggleTrackingEdit" value="trackingTab" checked />
+											<label for="login"> Already Shipped</label>
+										</div>
+										<div class="col-sm-4">
+											<input type="radio" name="toggleTrackingEdit" value="futureTab" />
+											<label for="register"> Future Shipment</label>
+										</div>
+									</fieldset>
+								</div>
+								<div class="form-group" id="trackingTab">
+									<label for="trackingNumber" class="col-sm-3 control-label">Tracking Number</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="trackingNumberEdit" id="trackingNumberEdit" placeholder="USPS, UPS, FedEx, and many others supported">
+									</div>
+								</div>
+								<div class="form-group" id="futureTab">
+									<label for="expectShipDate" class="col-sm-3 control-label">Expected Shipping Date</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="expectShipDateEdit" id="expectShipDateEdit" placeholder="When do we expect this to ship?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="shipper" class="col-sm-3 control-label">Shipper/From</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="shipperEdit" id="shipperEdit" placeholder="Who mailed this?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="destination" class="col-sm-3 control-label">Destination/To</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="destinationEdit" id="destinationEdit" placeholder="Who is receiving it?">
+									</div>
+								</div>
+								<div class="form-group">
+									<label for="contents" class="col-sm-3 control-label">Contents</label>
+									<div class="col-sm-9">
+										<input type="text" class="form-control" name="contentsEdit" id="contentsEdit" placeholder="What's inside?">
+									</div>
+								</div>
+							</div>
+							<div class="modal-footer">
+								<button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+								<button type="submit" name="editShipment" class="btn btn-primary">Edit Shipment</button>
+							</div>
+						</form>
+					</div>
 				</div>
 			</div>
-
-
-			<div class="page-header">
-				<h1>Thumbnails</h1>
-			</div>
-			<img data-src="holder.js/200x200" class="img-thumbnail" alt="A generic square placeholder image with a white border around it, making it resemble a photograph taken with an old instant camera">
-
-
-			<div class="page-header">
-				<h1>Labels</h1>
-			</div>
-			<h1>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h1>
-			<h2>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h2>
-			<h3>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h3>
-			<h4>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h4>
-			<h5>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h5>
-			<h6>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</h6>
-			<p>
-				<span class="label label-default">Default</span>
-				<span class="label label-primary">Primary</span>
-				<span class="label label-success">Success</span>
-				<span class="label label-info">Info</span>
-				<span class="label label-warning">Warning</span>
-				<span class="label label-danger">Danger</span>
-			</p>
-
-
-			<div class="page-header">
-				<h1>Badges</h1>
-			</div>
-			<p>
-				<a href="#">Inbox <span class="badge">42</span></a>
-			</p>
-			<ul class="nav nav-pills" role="tablist">
-				<li role="presentation" class="active"><a href="#">Home <span class="badge">42</span></a></li>
-				<li role="presentation"><a href="#">Profile</a></li>
-				<li role="presentation"><a href="#">Messages <span class="badge">3</span></a></li>
-			</ul>
-
-
-			<div class="page-header">
-				<h1>Dropdown menus</h1>
-			</div>
-			<div class="dropdown theme-dropdown clearfix">
-				<a id="dropdownMenu1" href="#" class="sr-only dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Dropdown <span class="caret"></span></a>
-				<ul class="dropdown-menu" aria-labelledby="dropdownMenu1">
-					<li class="active"><a href="#">Action</a></li>
-					<li><a href="#">Another action</a></li>
-					<li><a href="#">Something else here</a></li>
-					<li role="separator" class="divider"></li>
-					<li><a href="#">Separated link</a></li>
-				</ul>
-			</div>
-
-
-			<div class="page-header">
-				<h1>Navs</h1>
-			</div>
-			<ul class="nav nav-tabs" role="tablist">
-				<li role="presentation" class="active"><a href="#">Home</a></li>
-				<li role="presentation"><a href="#">Profile</a></li>
-				<li role="presentation"><a href="#">Messages</a></li>
-			</ul>
-			<ul class="nav nav-pills" role="tablist">
-				<li role="presentation" class="active"><a href="#">Home</a></li>
-				<li role="presentation"><a href="#">Profile</a></li>
-				<li role="presentation"><a href="#">Messages</a></li>
-			</ul>
-
-
-			<div class="page-header">
-				<h1>Navbars</h1>
-			</div>
-
-			<nav class="navbar navbar-default">
-				<div class="container">
-					<div class="navbar-header">
-						<button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".navbar-collapse">
-							<span class="sr-only">Toggle navigation</span>
-							<span class="icon-bar"></span>
-							<span class="icon-bar"></span>
-							<span class="icon-bar"></span>
-						</button>
-						<a class="navbar-brand" href="#">Project name</a>
-					</div>
-					<div class="navbar-collapse collapse">
-						<ul class="nav navbar-nav">
-							<li class="active"><a href="#">Home</a></li>
-							<li><a href="#about">About</a></li>
-							<li><a href="#contact">Contact</a></li>
-							<li class="dropdown">
-								<a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Dropdown <span class="caret"></span></a>
-								<ul class="dropdown-menu">
-									<li><a href="#">Action</a></li>
-									<li><a href="#">Another action</a></li>
-									<li><a href="#">Something else here</a></li>
-									<li role="separator" class="divider"></li>
-									<li class="dropdown-header">Nav header</li>
-									<li><a href="#">Separated link</a></li>
-									<li><a href="#">One more separated link</a></li>
-								</ul>
-							</li>
-						</ul>
-					</div><!--/.nav-collapse -->
-				</div>
-			</nav>
-
-			<nav class="navbar navbar-inverse">
-				<div class="container">
-					<div class="navbar-header">
-						<button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".navbar-collapse">
-							<span class="sr-only">Toggle navigation</span>
-							<span class="icon-bar"></span>
-							<span class="icon-bar"></span>
-							<span class="icon-bar"></span>
-						</button>
-						<a class="navbar-brand" href="#">Project name</a>
-					</div>
-					<div class="navbar-collapse collapse">
-						<ul class="nav navbar-nav">
-							<li class="active"><a href="#">Home</a></li>
-							<li><a href="#about">About</a></li>
-							<li><a href="#contact">Contact</a></li>
-							<li class="dropdown">
-								<a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Dropdown <span class="caret"></span></a>
-								<ul class="dropdown-menu">
-									<li><a href="#">Action</a></li>
-									<li><a href="#">Another action</a></li>
-									<li><a href="#">Something else here</a></li>
-									<li role="separator" class="divider"></li>
-									<li class="dropdown-header">Nav header</li>
-									<li><a href="#">Separated link</a></li>
-									<li><a href="#">One more separated link</a></li>
-								</ul>
-							</li>
-						</ul>
-					</div><!--/.nav-collapse -->
-				</div>
-			</nav>
-
-
-			<div class="page-header">
-				<h1>Alerts</h1>
-			</div>
-			<div class="alert alert-success" role="alert">
-				<strong>Well done!</strong> You successfully read this important alert message.
-			</div>
-			<div class="alert alert-info" role="alert">
-				<strong>Heads up!</strong> This alert needs your attention, but it's not super important.
-			</div>
-			<div class="alert alert-warning" role="alert">
-				<strong>Warning!</strong> Best check yo self, you're not looking too good.
-			</div>
-			<div class="alert alert-danger" role="alert">
-				<strong>Oh snap!</strong> Change a few things up and try submitting again.
-			</div>
-
-
-			<div class="page-header">
-				<h1>Progress bars</h1>
-			</div>
-			<div class="progress">
-				<div class="progress-bar" role="progressbar" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100" style="width: 60%;"><span class="sr-only">60% Complete</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-success" role="progressbar" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" style="width: 40%"><span class="sr-only">40% Complete (success)</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-info" role="progressbar" aria-valuenow="20" aria-valuemin="0" aria-valuemax="100" style="width: 20%"><span class="sr-only">20% Complete</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-warning" role="progressbar" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100" style="width: 60%"><span class="sr-only">60% Complete (warning)</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-danger" role="progressbar" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100" style="width: 80%"><span class="sr-only">80% Complete (danger)</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-striped" role="progressbar" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100" style="width: 60%"><span class="sr-only">60% Complete</span></div>
-			</div>
-			<div class="progress">
-				<div class="progress-bar progress-bar-success" style="width: 35%"><span class="sr-only">35% Complete (success)</span></div>
-				<div class="progress-bar progress-bar-warning" style="width: 20%"><span class="sr-only">20% Complete (warning)</span></div>
-				<div class="progress-bar progress-bar-danger" style="width: 10%"><span class='sr-only'>10% Complete (danger)</span></div>
-			</div>
-
-
-			<div class="page-header">
-				<h1>List groups</h1>
-			</div>
-			<div class="row">
-				<div class="col-sm-4">
-					<ul class="list-group">
-						<li class="list-group-item">Cras justo odio</li>
-						<li class="list-group-item">Dapibus ac facilisis in</li>
-						<li class="list-group-item">Morbi leo risus</li>
-						<li class="list-group-item">Porta ac consectetur ac</li>
-						<li class="list-group-item">Vestibulum at eros</li>
-					</ul>
-				</div><!-- /.col-sm-4 -->
-				<div class="col-sm-4">
-					<div class="list-group">
-						<a href="#" class="list-group-item active">
-							Cras justo odio
-						</a>
-						<a href="#" class="list-group-item">Dapibus ac facilisis in</a>
-						<a href="#" class="list-group-item">Morbi leo risus</a>
-						<a href="#" class="list-group-item">Porta ac consectetur ac</a>
-						<a href="#" class="list-group-item">Vestibulum at eros</a>
-					</div>
-				</div><!-- /.col-sm-4 -->
-				<div class="col-sm-4">
-					<div class="list-group">
-						<a href="#" class="list-group-item active">
-							<h4 class="list-group-item-heading">List group item heading</h4>
-							<p class="list-group-item-text">Donec id elit non mi porta gravida at eget metus. Maecenas sed diam eget risus varius blandit.</p>
-						</a>
-						<a href="#" class="list-group-item">
-							<h4 class="list-group-item-heading">List group item heading</h4>
-							<p class="list-group-item-text">Donec id elit non mi porta gravida at eget metus. Maecenas sed diam eget risus varius blandit.</p>
-						</a>
-						<a href="#" class="list-group-item">
-							<h4 class="list-group-item-heading">List group item heading</h4>
-							<p class="list-group-item-text">Donec id elit non mi porta gravida at eget metus. Maecenas sed diam eget risus varius blandit.</p>
-						</a>
-					</div>
-				</div><!-- /.col-sm-4 -->
-			</div>
-
-
-			<div class="page-header">
-				<h1>Panels</h1>
-			</div>
-			<div class="row">
-				<div class="col-sm-4">
-					<div class="panel panel-default">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-					<div class="panel panel-primary">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-				</div><!-- /.col-sm-4 -->
-				<div class="col-sm-4">
-					<div class="panel panel-success">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-					<div class="panel panel-info">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-				</div><!-- /.col-sm-4 -->
-				<div class="col-sm-4">
-					<div class="panel panel-warning">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-					<div class="panel panel-danger">
-						<div class="panel-heading">
-							<h3 class="panel-title">Panel title</h3>
-						</div>
-						<div class="panel-body">
-							Panel content
-						</div>
-					</div>
-				</div><!-- /.col-sm-4 -->
-			</div>
-
-
-			<div class="page-header">
-				<h1>Wells</h1>
-			</div>
-			<div class="well">
-				<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas sed diam eget risus varius blandit sit amet non magna. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent commodo cursus magna, vel scelerisque nisl consectetur et. Cras mattis consectetur purus sit amet fermentum. Duis mollis, est non commodo luctus, nisi erat porttitor ligula, eget lacinia odio sem nec elit. Aenean lacinia bibendum nulla sed consectetur.</p>
-			</div>
-
-
-			<div class="page-header">
-				<h1>Carousel</h1>
-			</div>
-			<div id="carousel-example-generic" class="carousel slide" data-ride="carousel">
-				<ol class="carousel-indicators">
-					<li data-target="#carousel-example-generic" data-slide-to="0" class="active"></li>
-					<li data-target="#carousel-example-generic" data-slide-to="1"></li>
-					<li data-target="#carousel-example-generic" data-slide-to="2"></li>
-				</ol>
-				<div class="carousel-inner" role="listbox">
-					<div class="item active">
-						<img data-src="holder.js/1140x500/auto/#777:#555/text:First slide" alt="First slide">
-					</div>
-					<div class="item">
-						<img data-src="holder.js/1140x500/auto/#666:#444/text:Second slide" alt="Second slide">
-					</div>
-					<div class="item">
-						<img data-src="holder.js/1140x500/auto/#555:#333/text:Third slide" alt="Third slide">
-					</div>
-				</div>
-				<a class="left carousel-control" href="#carousel-example-generic" role="button" data-slide="prev">
-					<span class="glyphicon glyphicon-chevron-left" aria-hidden="true"></span>
-					<span class="sr-only">Previous</span>
-				</a>
-				<a class="right carousel-control" href="#carousel-example-generic" role="button" data-slide="next">
-					<span class="glyphicon glyphicon-chevron-right" aria-hidden="true"></span>
-					<span class="sr-only">Next</span>
-				</a>
-			</div>
-
 
 		</div> <!-- /container -->
 
-
-		<!-- Bootstrap core JavaScript
-		================================================== -->
-		<!-- Placed at the end of the document so the pages load faster -->
-		<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
-		<!-- Latest compiled and minified JavaScript -->
-		<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
 	</body>
 </html>
-
