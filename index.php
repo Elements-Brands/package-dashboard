@@ -1,4 +1,11 @@
 <?
+	/* You will need to create a 'config.php' that defines the following variables:
+		$server // the database server
+		$user // mysql user
+		$password // mysql password
+		$db_name // mysql database name
+		$aftership_api_key // your AfterShip API key
+	*/
 	require_once('config.php');
 	require_once('database.php');
 	require_once('vendor/autoload.php');

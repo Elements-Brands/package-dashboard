@@ -11,3 +11,8 @@ A quick and dirty dashboard of package tracking information, using the [AfterShi
 * *index.php* - The main shipments dashboard, shows the most up-to-date information from the database, allows users to view, add, edit, and delete shipments.
 * *worker.php* - Pings the AfterShip API to pull in updated status information for packages. This should be set to run via cronjob, recommended frequency is once every hour.
 * *database.sql* - Database schema.
+
+## Required Configuration
+* Obtain an AfterShip API key
+* Create a config.php file in the root directory as defined in the comments at the top of index.php
+* Schedule a cronjob to run worker.php
