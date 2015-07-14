@@ -14,8 +14,12 @@
 		if (isset($package['aftership_id']))
 			$return = $aftership->get_by_id($package['aftership_id']);
 
+		//var_dump($return);
+
 		if (isset($return['data']['tracking']))
 		{
+			$checkpoints = $return['data']['tracking']['checkpoints'];
+
 			$shipment = array(
 				"idx" => $package['idx'],
 				"aftership_id" => $return['data']['tracking']['id'],
@@ -25,6 +29,7 @@
 				"delivery" => date('Y-m-d H:i:s', strtotime($return['data']['tracking']['expected_delivery'])),
 				"status" => $return['data']['tracking']['tag'],
 				"method" => $return['data']['tracking']['shipment_type'],
+				"checkpoints" => json_encode($checkpoints),
 			);
 
 			if ($return['data']['tracking']['tag'] == "Delivered")

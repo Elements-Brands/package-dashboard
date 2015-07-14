@@ -126,6 +126,12 @@
 		<link rel="stylesheet" href="css/bootstrap-datepicker.min.css">
 		<script src="js/bootstrap-datepicker.min.js"></script>
 
+		<style type="text/css">
+		    .popover{
+		        max-width:900px;
+		    }
+		</style>
+
 	</head>
 
 	<body role="document">
@@ -146,6 +152,7 @@
 					<ul class="nav navbar-nav">
 						<li class="active"><a href="#">Home</a></li>
 						<li><a href="#about" data-toggle="modal" data-target="#addShipmentModal">Add Package</a></li>
+						<li><a href="#refresh" id="refresh-icon" title="Refresh data from carriers" data-toggle="tooltip" data-placement="bottom" data-container="body"><span class="glyphicon glyphicon-refresh" aria-hidden="true"></span></a></li>
 					</ul>
 				</div><!--/.nav-collapse -->
 			</div>
@@ -169,15 +176,14 @@
 								<th data-field="from" data-sortable="true">From</th>
 								<th data-field="to" data-sortable="true">To</th>
 								<th data-field="contents" data-sortable="true">Contents</th>
-								<th data-field="shipped" data-sortable="true">Shipped</th>
-								<th data-field="delivery" data-sortable="true">Delivery</th>
+								<th data-field="delivery" data-sortable="true" style="min-width: 225px;">Delivery</th>
 								<th data-field="daysleft" data-sortable="true">Days Left</th>
 								<th data-field="status" data-sortable="true">Status</th>
 								<th>Actions</th>
 							</tr>
 						</thead>
 						<tbody><?
-							$sql = "SELECT * FROM packages WHERE delivery_confirmed=0 OR delivery > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY) ORDER BY TIMEDIFF(shipped, delivery) DESC";
+							$sql = "SELECT * FROM packages WHERE delivery_confirmed=0 OR delivery > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 DAY) ORDER BY TIMEDIFF(shipped, delivery) DESC";
 							$result = mysql_query($sql) or die (mysql_error());
 
 							while($package = mysql_fetch_assoc($result)) {
@@ -187,7 +193,7 @@
 									$package['shipped'] = 0;
 								}
 								else
-									$package['shipped_formatted'] = date('D, F jS, Y', strtotime($package['shipped']));
+									$package['shipped_formatted'] = date('D, M jS, Y', strtotime($package['shipped']));
 
 								if ($package['delivery'] == "0000-00-00 00:00:00" || (strtotime($package['delivery']) < strtotime("1 year ago")))
 								{
@@ -195,7 +201,7 @@
 									$package['delivery'] = 0;
 								}
 								else
-									$package['delivery_formatted'] = date('D, F jS, Y', strtotime($package['delivery']));
+									$package['delivery_formatted'] = date('D, M jS, Y', strtotime($package['delivery']));
 
 								// calculate days remaining
 								if ($package['delivery'] != 0 && $package['shipped'] != 0)
@@ -203,12 +209,41 @@
 								else
 									$package['days_remaining'] = "?";
 
+								// Build a structured array of the tracking checkpoints
+								$checkpoints = json_decode($package['checkpoints'], true);
 
 							?><tr>
 								<td><?=$package['idx']?></td>
 								<td>
+									<div id="popover-<?=$package['idx']?>" style="display: none;">
+										<div class="popover-body">
+											<table class="table table-striped">
+												<thead>
+													<tr>
+														<th data-field="checkpoint-location-<?=$package['idx']?>" data-sortable="true">Location</th>
+														<th data-field="checkpoint-date-<?=$package['idx']?>" data-sortable="true">Date</th>
+														<th data-field="checkpoint-message-<?=$package['idx']?>" data-sortable="true">Message</th>
+														<th data-field="checkpoint-status-<?=$package['idx']?>" data-sortable="true">Status</th>
+													</tr>
+												</thead>
+												<tbody>
+												<?
+													foreach ($checkpoints as $checkpoint) {
+												?>
+													<tr>
+														<td><?=$checkpoint['location']?></td>
+														<td><?=$checkpoint['checkpoint_time']?></td>
+														<td><?=$checkpoint['message']?></td>
+														<td><?=$checkpoint['tag']?></td>
+													</tr>
+												<? } ?>
+												</tbody>
+											</table>
+										</div>
+									</div>
+
 									<? if (!empty($package['tracking'])) { ?>
-									<a href="<?=get_tracking_url($package['tracking'])?>"><?=$package['tracking']?></a><br />(<?=strtoupper($package['carrier'])." ".ucwords(strtolower($package['method']))?>)</td>
+									<a href="#" data-toggle="popover" data-popover-content="#popover-<?=$package['idx']?>" data-placement="bottom" data-trigger="focus" role="button" tabindex="<?=$package['idx']?>"><?=$package['tracking']?></a><br />(<?=strtoupper($package['carrier'])." ".ucwords(strtolower($package['method']))?> <a href="<?=get_tracking_url($package['tracking'])?>"><span class="glyphicon glyphicon-new-window" aria-hidden="true"></span></a>)</td>
 									<? } else { ?>
 									None Yet
 									<? } ?>
@@ -216,8 +251,7 @@
 								<td><?=$package['shipper']?></td>
 								<td><?=$package['destination']?></td>
 								<td><?=$package['contents']?></td>
-								<td><?=$package['shipped_formatted']?></td>
-								<td><?=$package['delivery_formatted']?></td>
+								<td><strong>Delivery: <?=$package['delivery_formatted']?></strong><br />Shipped: <?=$package['shipped_formatted']?></td>
 								<td><?=$package['days_remaining']?>
 								<td><?=$package['status']?></td>
 								<td>
@@ -226,7 +260,7 @@
 										<? if (!$package['delivery_confirmed']) { ?>
 										<button type="submit" name="markRec" value="<?=$package['idx']?>" class="btn btn-xs btn-success">Mark Received</button>
 										<? } ?>
-										<button type="button" name="edit" value="<?=$package['idx']?>" class="btn btn-xs btn-primary" data-toggle="modal" data-target="#editPackageModal" data-whatever="">Edit</button>
+										<!--<button type="button" name="edit" value="<?=$package['idx']?>" class="btn btn-xs btn-primary" data-toggle="modal" data-target="#editPackageModal" data-whatever="">Edit</button>-->
 										<button type="submit" name="markDel" value="<?=$package['idx']?>" class="btn btn-xs btn-danger">Delete</button>
 									</form>
 								</td>
@@ -239,8 +273,29 @@
 				</div>
 			</div>
 
-			<!-- Modal -->
+			<!-- Modal and Popovers -->
 			<script>
+				$.fn.animateRotate = function(startAngle, endAngle, duration, easing, complete){
+				    return this.each(function(){
+				        var elem = $(this);
+
+				        $({deg: startAngle}).animate({deg: endAngle}, {
+				            duration: duration,
+				            easing: easing,
+				            step: function(now){
+				                elem.css({
+				                  '-moz-transform':'rotate('+now+'deg)',
+				                  '-webkit-transform':'rotate('+now+'deg)',
+				                  '-o-transform':'rotate('+now+'deg)',
+				                  '-ms-transform':'rotate('+now+'deg)',
+				                  'transform':'rotate('+now+'deg)'
+				                });
+				            },
+				            complete: complete || $.noop
+				        });
+				    });
+				};
+
 				$(document).ready(function() {
 					$("#futureTab").hide();
 
@@ -255,8 +310,35 @@
 					    autoclose: true,
 					    todayHighlight: true
 					});
-				});
 
+					$("[data-toggle=popover]").popover({
+						html : true,
+						content: function() {
+							var content = $(this).attr("data-popover-content");
+							return $(content).children(".popover-body").html();
+						},
+						container : 'body'
+					});
+
+					$('[data-toggle="tooltip"]').tooltip();
+
+					$("#refresh-icon").click(function() {
+						
+						$(this).animateRotate(360, 700);
+
+						$.ajax({
+							url: "worker.php",
+							success: function() {
+								location.reload(true);
+							},
+							error: function() {
+								alert('Refresh failed');
+								$("#refresh-icon").find('span').css("color", "red");
+							}
+						})
+					});
+
+				});
 			
 			</script>
 
