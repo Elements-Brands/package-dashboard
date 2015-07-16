@@ -11,5 +11,6 @@ CREATE TABLE `packages` (
   `shipper` varchar(255) DEFAULT NULL,
   `destination` varchar(255) DEFAULT NULL,
   `contents` text,
+  `checkpoints` text,
   PRIMARY KEY (`idx`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;
